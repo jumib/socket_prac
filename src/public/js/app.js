@@ -1,70 +1,121 @@
-// front-end
+const socket = io();
 
-const messageForm = document.querySelector("#message");
-const nickForm = document.querySelector("#nick");
-const messageList = document.querySelector("ul");
-// ${window.location.host}사용했기때문에 폰에서도 접속가능
-// 보내려는 서버가 js가 아닐수도 있기때문에 js obj로 보내면 안된다.
-const socket = new WebSocket(`ws://${window.location.host}`);
+const myFace = document.getElementById("myFace");
+const muteBtn = document.getElementById("mute");
+const cameraBtn = document.getElementById("camera");
+const camerasSelect = document.getElementById("cameras");
 
-// 타입 구분을 위해서 JSON형태의 메세지를 STRING으로 바꿔준다.
-function makeMessage(type, payload){
-    const msg = {type, payload};
-    return JSON.stringify(msg);
+const call = document.getElementById("call");
+
+call.hidden = true;
+
+ let myStream;
+ let muted = false;
+ let cameraOff = true;
+ let roomName;
+
+ async function getCameras(){
+     try{
+         const devices = await navigator.mediaDevices.enumerateDevices();
+         const cameras = devices.filter(device => device.kind === "videoinput")
+         const currentCamera = myStream.getVideoTracks()[0];
+         cameras.forEach((camera) => {
+             const option = document.createElement("option");
+             option.value = camera.deviceId;
+             option.innerText = camera.label;
+             if (currentCamera.label === camera.label){
+                 option.selected = true
+             }
+             camerasSelect.appendChild(option);
+         })
+     } catch(e){
+         console.log(e);
+     }
 }
 
-//socket 자체 기능
-socket.addEventListener("open", () => {
-    console.log("Conneted to Server :)")
-})
 
-socket.addEventListener("message", (message) => {
-    const li = document.createElement("li"); 
-    li.innerText = message.data; // li안에 메세지 데이터 넣어줌
-    messageList.append(li);
-    // console.log("New Message : ", message.data)
-})
+ async function getMedia(deviceId){
+     const initialConstrains = {
+         audio: true, video: { facingMode: "user" }
+     }
+     const cameraConstrains = {
+        audio: true, video: { facingMode: { exact: deviceId }}
+     }
+     try {
+         myStream = await navigator.mediaDevices.getUserMedia(
+             deviceId ? cameraConstrains : initialConstrains
+         );
+         console.log(myStream);
+         myFace.srcObject = myStream;
+         if(!deviceId){
+            await getCameras();
+         }
+     } catch(e){
+         console.log(e)
+     }
+ };
 
-socket.addEventListener("close", () => {
-    console.log("Disconneted to Server :(")
-})
+//  getMedia();
 
-function handleSubmit(event){
-    event.preventDefault();
-    // input을 가져온다.
-    const input = messageForm.querySelector("input");
-    // console.log(input.value);
-    // socket.send(input.value)
-    socket.send(makeMessage("new_message", input.value));
-    input.value = "";
-} 
-
-function handleNickSubmit(event){
-    event.preventDefault();
-    const input = nickForm.querySelector("input");
-    // socket.send({
-    //     type: "nickname",
-	//     payload: input.value,
-    // }) 
-    socket.send(makeMessage( "nickname", input.value));
-    input.value = "";
+function handleMuteClick(){
+    console.log(myStream.getAudioTracks());
+    myStream.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled
+    });
+    if(!muted){
+        muteBtn.innerText = "Unmute"
+        muted = true;
+    } else{
+        muteBtn.innerText = "Mute"
+        muted = false;
+    }
+}
+function handleCameraClick(){
+    console.log(myStream.getVideoTracks());
+    myStream.getVideoTracks().forEach(track => {
+        track.enabled = !track.enabled
+    });
+    if(cameraOff){
+        cameraBtn.innerText = "Turn Camera Off"
+        cameraOff = false
+    } else{
+        cameraBtn.innerText = "Turn Camera On"
+        cameraOff = true
+    }
+}
+async function handleCameraChange(){ 
+    // console.log(camerasSelect.value)
+    await getMedia(camerasSelect.value);
 }
 
-messageForm.addEventListener("submit", handleSubmit);
-nickForm.addEventListener("submit", handleNickSubmit);
+muteBtn.addEventListener("click", handleMuteClick)
+cameraBtn.addEventListener("click", handleCameraClick)
+camerasSelect.addEventListener("input", handleCameraChange) // 카메라 바꾸면 stream 강제 재시작
 
 
+// Welcome Form (join a room)
 
-// #1. 프론트에서는 addEventListener의 message를 사용해주었고
-// socket.addEventListener("message", (message) => {
-//     const li = document.createElement("li"); 
-//     li.innerText = message.data;
-//     messageList.append(li);
-// })
+const welcome = document.getElementById("welcome");
+const welcomeForm = welcome.querySelector("form")
 
-// #2. 백에서는 socket.on의 message를 사용해주었고
-// socket.on("message", (message) => {
-//     sockets.forEach((aSocket) => aSocket.send(message));
-//     socket.send(message);
+function startMedia(){
+    welcome.hidden = true;
+    call.hidden = false;
+    getMedia();
+}
 
-// });
+function handleWelcomeSubmit(e){
+    e.preventDefault();
+    const input = welcomeForm.querySelector("input");
+    console.log(input.value)
+    socket.emit("join_room", input.value, startMedia)
+    roomName = input.value;
+    input.value= "";
+}
+
+welcomeForm.addEventListener("submit", handleWelcomeSubmit);
+
+
+socket.on("welcome", () => {
+    console.log("someone joined")
+})
