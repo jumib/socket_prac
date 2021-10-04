@@ -13,6 +13,7 @@ call.hidden = true;
  let muted = false;
  let cameraOff = true;
  let roomName;
+ let myPeerConnection;
 
  async function getCameras(){
      try{
@@ -98,17 +99,20 @@ camerasSelect.addEventListener("input", handleCameraChange) // 카메라 바꾸�
 const welcome = document.getElementById("welcome");
 const welcomeForm = welcome.querySelector("form")
 
-function startMedia(){
+// 여기가 양쪽 브라우저에서 모두 실행시키는 부분
+async function initCall(){
     welcome.hidden = true;
     call.hidden = false;
-    getMedia();
+    await getMedia();
+    makeConnection();
 }
 
-function handleWelcomeSubmit(e){
+async function handleWelcomeSubmit(e){
     e.preventDefault();
     const input = welcomeForm.querySelector("input");
     console.log(input.value)
-    socket.emit("join_room", input.value, startMedia)
+    await initCall(); // 웹소켓의 속도가 미디어를 가져오고 연결하는 속도보다 빨라서
+    socket.emit("join_room", input.value)
     roomName = input.value;
     input.value= "";
 }
@@ -116,6 +120,64 @@ function handleWelcomeSubmit(e){
 welcomeForm.addEventListener("submit", handleWelcomeSubmit);
 
 
-socket.on("welcome", () => {
-    console.log("someone joined")
+socket.on("welcome", async() => {
+    //사파리가 참가하면 크롬에서 실행되는 코드.
+    // 여기서는 즉 크롬이 A, offer를 만드는 , 이 행위를 시작하는 주체.
+    // 이건 오직 크롬에서만 동작한다는거 기억해 !!!!!
+    const offer = await myPeerConnection.createOffer();
+    // console.log(offer)
+    myPeerConnection.setLocalDescription(offer);
+    console.log("sent the offer")
+    socket.emit("offer", offer, roomName);
+    // console.log("someone joined")
 })
+
+    // peer B인 사파리에서 동작
+    // offer주고받을땐 서버필요, 받은 후엔 직접적으로 대화가능
+socket.on("offer", async (offer) => {
+    // console.log(offer);
+    myPeerConnection.setRemoteDescription(offer); //받은 오퍼 설정
+    const answer = await myPeerConnection.createAnswer();
+    console.log(answer);
+    myPeerConnection.setLocalDescription(answer);
+    socket.emit("answer", answer, roomName); // 사파리에서 크롬으로 보낼 답이 있을때 answer로 응답
+});
+
+    // 그 answer로 크롬도 remoteDescription을 가지게 되었다.
+    // 즉 이제 두 브라우저 모두 localDescription과 remoteDescription을 가짐.
+socket.on("answer", async (answer ) => {
+    // console.log(offer);
+    myPeerConnection.setRemoteDescription(answer); //받은 answer 설정
+});
+
+socket.on("ice", async (ice ) => {
+    myPeerConnection.addIceCandidate(ice); 
+});
+
+// RTC Code
+
+function makeConnection(){
+    myPeerConnection = new RTCPeerConnection();
+    myPeerConnection.addEventListener("icecandidate", handleIce);
+    myPeerConnection.addEventListener("addstream", handleAddStream);
+    console.log(myStream.getTracks()) // 비디오/오디오 스트림 트랙을 피어투피어에 넣음
+    myStream
+        .getTracks()
+        .forEach(track => myPeerConnection.addTrack(track, myStream)); // 두 브라우저를 따로 구성만 함. 아직 연결 x
+
+
+ }
+
+ function handleIce(data){
+    socket.emit("ice", data.candidate, roomName);
+     console.log("got ice candidate");
+    //  console.log(data)
+ } 
+
+ function handleAddStream(data){
+    const peerFace = document.getElementById("peerFace");
+    console.log("got AddStream");
+     console.log("Peer",data.stream)
+     console.log("My", myStream)
+    peerFace.srcObject = data.stream; 
+ }
